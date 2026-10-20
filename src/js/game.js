@@ -13,6 +13,8 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 const GHOST_MODE_DURATION_MS = 5000;
+const POWER_DURATION_MS = 10000;
+const GHOST_IMMUNITY_DURATION_MS = 2000;
 const SHY_SCATTER_DISTANCE = 8;
 const GHOST_SCATTER_TARGETS = {
   alternator: { x: 1, y: 1 },
@@ -27,13 +29,15 @@ function createGame() {
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid ) for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
     score: 0,
     lives: 3,
     activeTimeMs: 0,
+    powerUntilMs: 0,
+    ghostCombo: 0,
     dotsRemaining: dots,
     grid,
     pacman: {
@@ -49,6 +53,7 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      immuneUntilMs: 0,
     } ) ),
   };
 }
@@ -188,6 +193,22 @@ function chooseDirectionToward( grid, g, target, choices ) {
   return best;
 }
 
+function chooseDirectionAway( grid, g, target, choices ) {
+  let best = choices[ 0 ];
+  let bestDistance = -Infinity;
+  for ( const dir of choices ) {
+    const delta = DIRS[ dir ];
+    const next = normalizeTunnelPosition( grid, g.x + delta.x, g.y + delta.y );
+    const path = findPath( grid, next, target, 'ghost' );
+    const distance = path ? path.length : Infinity;
+    if ( distance > bestDistance ) {
+      bestDistance = distance;
+      best = dir;
+    }
+  }
+  return best;
+}
+
 function wrapTunnel( a, width ) {
   if ( Math.round( a.y ) === TUNNEL_ROW ) {
     if ( a.x < 0 ) a.x += width;
@@ -209,11 +230,16 @@ function movePacman( game ) {
       p.dir = p.nextDir;
       p.nextDir = null;
     }
-    // Comer dot.
-    if ( grid[ p.y ][ p.x ] === 2 ) {
+    // Recoger consumibles antes de resolver colisiones.
+    const tile = grid[ p.y ][ p.x ];
+    if ( tile === 2 || tile === 4 ) {
       grid[ p.y ][ p.x ] = 0;
-      game.score += 10;
+      game.score += tile === 4 ? 50 : 10;
       game.dotsRemaining--;
+      if ( tile === 4 ) {
+        game.powerUntilMs = game.activeTimeMs + POWER_DURATION_MS;
+        game.ghostCombo = 0;
+      }
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
@@ -235,7 +261,10 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
+  if ( game.activeTimeMs < game.powerUntilMs && game.activeTimeMs >= g.immuneUntilMs ) {
+    const target = { x: Math.round( p.x ), y: Math.round( p.y ) };
+    g.dir = chooseDirectionAway( grid, g, target, choices );
+  } else if ( g.kind === 'hunter' ) {
     const target = { x: Math.round( p.x ), y: Math.round( p.y ) };
     g.dir = chooseDirectionToward( grid, g, target, choices );
   } else if ( g.kind === 'ambusher' ) {
@@ -293,7 +322,21 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.immuneUntilMs = 0;
   } );
+}
+
+function resetGhostPosition( game, g, index ) {
+  g.x = GHOST_STARTS[ index ].x;
+  g.y = GHOST_STARTS[ index ].y;
+  g.dir = 'up';
+  g.immuneUntilMs = game.activeTimeMs + GHOST_IMMUNITY_DURATION_MS;
+}
+
+function cancelPower( game ) {
+  game.powerUntilMs = 0;
+  game.ghostCombo = 0;
+  game.ghosts.forEach( ( g ) => { g.immuneUntilMs = 0; } );
 }
 
 function collides( a, b ) {
@@ -304,9 +347,19 @@ function update( game ) {
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
-  for ( const g of game.ghosts ) {
+  for ( let i = 0; i < game.ghosts.length; i++ ) {
+    const g = game.ghosts[ i ];
     if ( collides( game.pacman, g ) ) {
+      if ( game.activeTimeMs < g.immuneUntilMs ) continue;
+      if ( game.activeTimeMs < game.powerUntilMs ) {
+        game.score += 200 * 2 ** Math.min( game.ghostCombo, 3 );
+        game.ghostCombo++;
+        resetGhostPosition( game, g, i );
+        continue;
+      }
+
       game.lives--;
+      cancelPower( game );
       if ( game.lives <= 0 ) {
         game.state = 'lost';
         return;
