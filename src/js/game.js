@@ -12,6 +12,12 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+const GHOST_MODE_DURATION_MS = 5000;
+const SHY_SCATTER_DISTANCE = 8;
+const GHOST_SCATTER_TARGETS = {
+  alternator: { x: 1, y: 1 },
+  shy: { x: 26, y: 1 },
+};
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -27,6 +33,7 @@ function createGame() {
     state: 'start',
     score: 0,
     lives: 3,
+    activeTimeMs: 0,
     dotsRemaining: dots,
     grid,
     pacman: {
@@ -71,6 +78,114 @@ function canMove( grid, x, y, dir, actor ) {
   // Tunel: salir por un borde en la fila del tunel siempre es valido.
   if ( ty === TUNNEL_ROW && ( tx < 0 || tx >= grid[ 0 ].length ) ) return true;
   return !isWall( grid, tx, ty, actor );
+}
+
+function normalizeTunnelPosition( grid, x, y ) {
+  if ( y === TUNNEL_ROW && x < 0 ) x += grid[ 0 ].length;
+  else if ( y === TUNNEL_ROW && x >= grid[ 0 ].length ) x -= grid[ 0 ].length;
+  return { x, y };
+}
+
+function getNeighbors( grid, x, y, actor ) {
+  const neighbors = [];
+  for ( const [ dir, delta ] of Object.entries( DIRS ) ) {
+    if ( !canMove( grid, x, y, dir, actor ) ) continue;
+    const next = normalizeTunnelPosition( grid, x + delta.x, y + delta.y );
+    neighbors.push( { ...next, dir } );
+  }
+  return neighbors;
+}
+
+function tileKey( x, y ) {
+  return `${x},${y}`;
+}
+
+function findPath( grid, start, target, actor ) {
+  const startX = Math.round( start.x );
+  const startY = Math.round( start.y );
+  const normalizedTarget = normalizeTunnelPosition( grid, Math.round( target.x ), Math.round( target.y ) );
+  const targetX = normalizedTarget.x;
+  const targetY = normalizedTarget.y;
+  if ( isWall( grid, targetX, targetY, actor ) ) return null;
+
+  const startKey = tileKey( startX, startY );
+  const targetKey = tileKey( targetX, targetY );
+  const queue = [ { x: startX, y: startY } ];
+  const visited = new Set( [ startKey ] );
+  const previous = new Map();
+
+  for ( let index = 0; index < queue.length; index++ ) {
+    const current = queue[ index ];
+    const currentKey = tileKey( current.x, current.y );
+    if ( currentKey === targetKey ) break;
+
+    for ( const neighbor of getNeighbors( grid, current.x, current.y, actor ) ) {
+      const nextKey = tileKey( neighbor.x, neighbor.y );
+      if ( visited.has( nextKey ) ) continue;
+      visited.add( nextKey );
+      previous.set( nextKey, { key: currentKey, dir: neighbor.dir } );
+      queue.push( { x: neighbor.x, y: neighbor.y } );
+    }
+  }
+
+  if ( !visited.has( targetKey ) ) return null;
+
+  const path = [];
+  for ( let key = targetKey; key !== startKey; ) {
+    const step = previous.get( key );
+    path.push( step.dir );
+    key = step.key;
+  }
+  return path.reverse();
+}
+
+function findClosestReachableTile( grid, start, target, actor ) {
+  const startX = Math.round( start.x );
+  const startY = Math.round( start.y );
+  const normalizedTarget = normalizeTunnelPosition( grid, Math.round( target.x ), Math.round( target.y ) );
+  const targetX = normalizedTarget.x;
+  const targetY = normalizedTarget.y;
+  const queue = [ { x: startX, y: startY } ];
+  const visited = new Set( [ tileKey( startX, startY ) ] );
+  let closest = queue[ 0 ];
+  let closestDistance = Infinity;
+
+  for ( let index = 0; index < queue.length; index++ ) {
+    const current = queue[ index ];
+    const horizontalDistance = Math.abs( current.x - targetX );
+    const wrappedDistance = current.y === TUNNEL_ROW && targetY === TUNNEL_ROW
+      ? Math.min( horizontalDistance, grid[ 0 ].length - horizontalDistance )
+      : horizontalDistance;
+    const distance = wrappedDistance + Math.abs( current.y - targetY );
+    if ( distance < closestDistance ) {
+      closest = current;
+      closestDistance = distance;
+    }
+
+    for ( const neighbor of getNeighbors( grid, current.x, current.y, actor ) ) {
+      const key = tileKey( neighbor.x, neighbor.y );
+      if ( visited.has( key ) ) continue;
+      visited.add( key );
+      queue.push( { x: neighbor.x, y: neighbor.y } );
+    }
+  }
+
+  return closest;
+}
+
+function chooseDirectionToward( grid, g, target, choices ) {
+  let best = choices[ 0 ];
+  let bestDistance = Infinity;
+  for ( const dir of choices ) {
+    const delta = DIRS[ dir ];
+    const next = normalizeTunnelPosition( grid, g.x + delta.x, g.y + delta.y );
+    const path = findPath( grid, next, target, 'ghost' );
+    if ( path && path.length < bestDistance ) {
+      bestDistance = path.length;
+      best = dir;
+    }
+  }
+  return best;
 }
 
 function wrapTunnel( a, width ) {
@@ -121,21 +236,31 @@ function decideGhost( game, g ) {
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
   if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
-    }
-    g.dir = best;
+    const target = { x: Math.round( p.x ), y: Math.round( p.y ) };
+    g.dir = chooseDirectionToward( grid, g, target, choices );
+  } else if ( g.kind === 'ambusher' ) {
+    const direction = DIRS[ p.dir ];
+    const target = normalizeTunnelPosition( grid,
+      Math.round( p.x ) + direction.x * 4,
+      Math.round( p.y ) + direction.y * 4
+    );
+    const reachableTarget = findPath( grid, g, target, 'ghost' )
+      ? target
+      : findClosestReachableTile( grid, g, target, 'ghost' );
+    g.dir = chooseDirectionToward( grid, g, reachableTarget, choices );
+  } else if ( g.kind === 'alternator' ) {
+    const mode = Math.floor( ( game.activeTimeMs || 0 ) / GHOST_MODE_DURATION_MS ) % 2;
+    const target = mode === 0
+      ? { x: Math.round( p.x ), y: Math.round( p.y ) }
+      : GHOST_SCATTER_TARGETS.alternator;
+    g.dir = chooseDirectionToward( grid, g, target, choices );
+  } else if ( g.kind === 'shy' ) {
+    const pacmanPosition = { x: Math.round( p.x ), y: Math.round( p.y ) };
+    const path = findPath( grid, g, pacmanPosition, 'ghost' );
+    const target = path && path.length > SHY_SCATTER_DISTANCE
+      ? pacmanPosition
+      : GHOST_SCATTER_TARGETS.shy;
+    g.dir = chooseDirectionToward( grid, g, target, choices );
   } else {
     g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
   }
