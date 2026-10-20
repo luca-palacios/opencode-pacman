@@ -14,6 +14,7 @@ const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 const GHOST_MODE_DURATION_MS = 5000;
 const POWER_DURATION_MS = 10000;
+const GHOST_IMMUNITY_DURATION_MS = 2000;
 const SHY_SCATTER_DISTANCE = 8;
 const GHOST_SCATTER_TARGETS = {
   alternator: { x: 1, y: 1 },
@@ -52,6 +53,7 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      immuneUntilMs: 0,
     } ) ),
   };
 }
@@ -259,7 +261,7 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( game.activeTimeMs < game.powerUntilMs ) {
+  if ( game.activeTimeMs < game.powerUntilMs && game.activeTimeMs >= g.immuneUntilMs ) {
     const target = { x: Math.round( p.x ), y: Math.round( p.y ) };
     g.dir = chooseDirectionAway( grid, g, target, choices );
   } else if ( g.kind === 'hunter' ) {
@@ -320,7 +322,21 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.immuneUntilMs = 0;
   } );
+}
+
+function resetGhostPosition( game, g, index ) {
+  g.x = GHOST_STARTS[ index ].x;
+  g.y = GHOST_STARTS[ index ].y;
+  g.dir = 'up';
+  g.immuneUntilMs = game.activeTimeMs + GHOST_IMMUNITY_DURATION_MS;
+}
+
+function cancelPower( game ) {
+  game.powerUntilMs = 0;
+  game.ghostCombo = 0;
+  game.ghosts.forEach( ( g ) => { g.immuneUntilMs = 0; } );
 }
 
 function collides( a, b ) {
@@ -331,9 +347,19 @@ function update( game ) {
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
-  for ( const g of game.ghosts ) {
+  for ( let i = 0; i < game.ghosts.length; i++ ) {
+    const g = game.ghosts[ i ];
     if ( collides( game.pacman, g ) ) {
+      if ( game.activeTimeMs < g.immuneUntilMs ) continue;
+      if ( game.activeTimeMs < game.powerUntilMs ) {
+        game.score += 200 * 2 ** Math.min( game.ghostCombo, 3 );
+        game.ghostCombo++;
+        resetGhostPosition( game, g, i );
+        continue;
+      }
+
       game.lives--;
+      cancelPower( game );
       if ( game.lives <= 0 ) {
         game.state = 'lost';
         return;
