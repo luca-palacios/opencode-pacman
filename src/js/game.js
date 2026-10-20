@@ -33,6 +33,7 @@ function createGame() {
     state: 'start',
     score: 0,
     lives: 3,
+    activeTimeMs: 0,
     dotsRemaining: dots,
     grid,
     pacman: {
