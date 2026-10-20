@@ -13,6 +13,7 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 const GHOST_MODE_DURATION_MS = 5000;
+const POWER_DURATION_MS = 10000;
 const SHY_SCATTER_DISTANCE = 8;
 const GHOST_SCATTER_TARGETS = {
   alternator: { x: 1, y: 1 },
@@ -34,6 +35,8 @@ function createGame() {
     score: 0,
     lives: 3,
     activeTimeMs: 0,
+    powerUntilMs: 0,
+    ghostCombo: 0,
     dotsRemaining: dots,
     grid,
     pacman: {
@@ -209,11 +212,16 @@ function movePacman( game ) {
       p.dir = p.nextDir;
       p.nextDir = null;
     }
-    // Comer dot.
-    if ( grid[ p.y ][ p.x ] === 2 ) {
+    // Recoger consumibles antes de resolver colisiones.
+    const tile = grid[ p.y ][ p.x ];
+    if ( tile === 2 || tile === 4 ) {
       grid[ p.y ][ p.x ] = 0;
-      game.score += 10;
+      game.score += tile === 4 ? 50 : 10;
       game.dotsRemaining--;
+      if ( tile === 4 ) {
+        game.powerUntilMs = game.activeTimeMs + POWER_DURATION_MS;
+        game.ghostCombo = 0;
+      }
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
