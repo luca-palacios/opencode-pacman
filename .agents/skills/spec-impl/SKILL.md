@@ -3,7 +3,16 @@ name: spec-impl
 description: Implements an approved spec. Validates that the state means "Approved" (in any language), creates a git branch named after the spec, switches to it, and starts the implementation step by step with pauses to review diffs.
 disable-model-invocation: true
 argument-hint: <NN-spec-name>
-allowed-tools: Read, Glob, Grep, Edit, Write, AskUserQuestion, Bash(git status:*), Bash(git branch:*), Bash(git checkout:*), Bash(git log:*), Bash(git diff:*), Bash(git stash:*), Bash(cat:*), Bash(ls:*)
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Edit
+  - Write
+  - AskUserQuestion
+  - Bash
+metadata:
+  opencode/slash: "true"
 ---
 
 # /spec-impl — Implementer of approved specs
@@ -115,17 +124,14 @@ Once you have confirmed the state means `Approved`:
    Wait for the answer. **Do not stash or commit on the user's behalf** unless they explicitly ask for it. If the working tree is clean, skip straight to step 1 without mentioning it.
 
 1. Derive the branch name from the spec file's full name, without the extension. Format: `spec-NN-slug`. Examples:
-
    - `01-mvp-arkanoid.md` → branch `spec-01-mvp-arkanoid`
    - `02-powerups.md` → branch `spec-02-powerups`
 
 2. Read the `AutoCreateBranch` flag from the **Branch-creation config** shown in the session context above.
-
    - If the config file does not exist, the value is missing, or the value is unrecognized → treat it as `true` (the default).
    - Only an explicit `false` (in any capitalization) disables automatic branch creation.
 
    **If `AutoCreateBranch` is `true` (default):** proceed without asking.
-
    - If the branch **does not exist**: create it with `git checkout -b spec-NN-slug`.
    - If it **already exists**: this means previous work is being resumed. Switch to it, read `git log --oneline` on the branch, and tell the user which steps of the plan already look done and which step you propose to resume from. Wait for confirmation on the resume point before implementing anything.
    - In both cases: switch to the branch with `git checkout spec-NN-slug` and confirm the change was successful before continuing.
