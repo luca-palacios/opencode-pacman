@@ -79,6 +79,19 @@ function drawDots( ctx, grid ) {
   }
 }
 
+function drawPowerPellets( ctx, grid ) {
+  ctx.fillStyle = '#fff';
+  for ( let y = 0; y < grid.length; y++ ) {
+    for ( let x = 0; x < grid[ 0 ].length; x++ ) {
+      if ( grid[ y ][ x ] !== 4 ) continue;
+      const { cx, cy } = cellCenter( x, y );
+      ctx.beginPath();
+      ctx.arc( cx, cy, 6, 0, Math.PI * 2 );
+      ctx.fill();
+    }
+  }
+}
+
 function drawPacman( ctx, p, frame ) {
   const { cx, cy } = cellCenter( p.x, p.y );
   let rot = 0;
@@ -146,6 +159,23 @@ function drawHUD( ctx, game, W ) {
 
 const GHOST_COLORS = [ '#ff0000', '#ffb8ff', '#00ffff', '#ffb852' ];
 
+function drawPowerBar( ctx, game, W ) {
+  const remainingMs = game.powerUntilMs - game.activeTimeMs;
+  if ( remainingMs <= 0 ) return;
+
+  const width = 120;
+  const height = 8;
+  const x = ( W * TILE - width ) / 2;
+  const y = 5;
+  ctx.fillStyle = '#333';
+  ctx.fillRect( x, y, width, height );
+  ctx.fillStyle = '#00aaff';
+  ctx.fillRect( x, y, width * Math.min( remainingMs / POWER_DURATION_MS, 1 ), height );
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect( x, y, width, height );
+}
+
 function draw( ctx, game, frame ) {
   const grid = game.grid;
   const W = grid[ 0 ].length;
@@ -157,9 +187,18 @@ function draw( ctx, game, frame ) {
   drawWalls( ctx, grid );
   drawDoor( ctx, grid );
   drawDots( ctx, grid );
+  drawPowerPellets( ctx, grid );
   drawPacman( ctx, game.pacman, frame );
-  game.ghosts.forEach( ( g, i ) => drawGhost( ctx, g, GHOST_COLORS[ i ] || '#ff0000' ) );
+  game.ghosts.forEach( ( g, i ) => {
+    const immune = game.activeTimeMs < g.immuneUntilMs;
+    const vulnerable = !immune && game.activeTimeMs < game.powerUntilMs;
+    ctx.save();
+    if ( immune ) ctx.globalAlpha = 0.5;
+    drawGhost( ctx, g, vulnerable ? '#2121ff' : GHOST_COLORS[ i ] || '#ff0000' );
+    ctx.restore();
+  } );
   drawHUD( ctx, game, W );
+  drawPowerBar( ctx, game, W );
 }
 
 window.draw = draw;
