@@ -191,6 +191,22 @@ function chooseDirectionToward( grid, g, target, choices ) {
   return best;
 }
 
+function chooseDirectionAway( grid, g, target, choices ) {
+  let best = choices[ 0 ];
+  let bestDistance = -Infinity;
+  for ( const dir of choices ) {
+    const delta = DIRS[ dir ];
+    const next = normalizeTunnelPosition( grid, g.x + delta.x, g.y + delta.y );
+    const path = findPath( grid, next, target, 'ghost' );
+    const distance = path ? path.length : Infinity;
+    if ( distance > bestDistance ) {
+      bestDistance = distance;
+      best = dir;
+    }
+  }
+  return best;
+}
+
 function wrapTunnel( a, width ) {
   if ( Math.round( a.y ) === TUNNEL_ROW ) {
     if ( a.x < 0 ) a.x += width;
@@ -243,7 +259,10 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
+  if ( game.activeTimeMs < game.powerUntilMs ) {
+    const target = { x: Math.round( p.x ), y: Math.round( p.y ) };
+    g.dir = chooseDirectionAway( grid, g, target, choices );
+  } else if ( g.kind === 'hunter' ) {
     const target = { x: Math.round( p.x ), y: Math.round( p.y ) };
     g.dir = chooseDirectionToward( grid, g, target, choices );
   } else if ( g.kind === 'ambusher' ) {
